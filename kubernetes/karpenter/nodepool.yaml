@@ -1,0 +1,195 @@
+################################################################################
+# Karpenter NodePool + EC2NodeClass
+#
+# This is the heart of Karpenter's autoscaling — and exactly what CAVA is
+# load-testing and fine-tuning (Feb–March per the JD).
+#
+# NodePool: WHAT kind of nodes to provision (CPU/memory constraints, limits)
+# EC2NodeClass: HOW to provision them (AMI, subnets, security groups, userdata)
+#
+# Key tuning knobs for load testing:
+# - limits.cpu/memory: hard cap on how much Karpenter can provision
+# - consolidationPolicy: WhenEmpty vs WhenUnderutilized (cost vs stability)
+# - weight: priority when multiple NodePools exist
+################################################################################
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: general-workloads
+spec:
+  # Template defines the node characteristics Karpenter will provision
+  template:
+    metadata:
+      labels:
+        role: workload
+        team: platform
+    spec:
+      # TRADEOFF: nodeClassRef ties this to AWS-specific config.
+      # For edge (Phase 2), we'd create a different NodePool.
+      nodeClassRef:
+        apiVersion: karpenter.k8s.aws/v1beta1
+        kind: EC2NodeClass
+        name: default
+
+      # Instance type selection strategy
+      # Karpenter picks the cheapest instance that fits pending pod requirements.
+      # Broad requirements = more options = better availability + pricing
+      requirements:
+        # Architecture: arm64 is cheaper but requires multi-arch images.
+        # Start with amd64 for compatibility, add arm64 when image pipeline is ready.
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+
+        # Capacity type: Prioritize spot for cost savings, fall back to on-demand.
+        # INTERVIEW NOTE: If asked about spot — Karpenter handles interruptions
+        # via SQS queue + EventBridge (see Terraform karpenter module).
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["spot", "on-demand"]
+
+        # Instance categories: general purpose + compute optimized
+        # Excluding burstable (t-series) — unpredictable performance under load
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["c", "m", "r"]
+
+        # Instance generations: current gen only for best price/performance
+        - key: "karpenter.k8s.aws/instance-generation"
+          operator: Gt
+          values: ["5"]
+
+        # Instance sizes: avoid tiny (overhead) and huge (blast radius)
+        - key: "karpenter.k8s.aws/instance-size"
+          operator: In
+          values: ["large", "xlarge", "2xlarge", "4xlarge"]
+
+  # Hard limits on total cluster capacity Karpenter can provision.
+  # Prevents runaway scaling from misconfigured HPA or resource requests.
+  # LOAD TESTING: Start conservative, increase after validating autoscaling behavior.
+  limits:
+    cpu: "100"        # 100 vCPUs total across all Karpenter-managed nodes
+    memory: "400Gi"   # 400 GiB total
+
+  # Disruption settings — how Karpenter optimizes the fleet
+  disruption:
+    # WhenUnderutilized: Replace nodes when they're underutilized
+    # WhenEmpty: Only remove nodes when fully drained
+    #
+    # TRADEOFF: WhenUnderutilized saves money but causes more pod disruptions.
+    # During pilot/load testing, use WhenEmpty for stability.
+    # Switch to WhenUnderutilized once workloads have proper PDBs.
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 60s
+
+    # Maximum percentage of nodes Karpenter can disrupt simultaneously
+    # Lower = safer during load testing
+    budgets:
+      - nodes: "20%"
+
+  # Weight determines priority when multiple NodePools exist.
+  # Higher weight = Karpenter tries this pool first.
+  weight: 50
+
+---
+################################################################################
+# EC2NodeClass — AWS-specific node configuration
+################################################################################
+apiVersion: karpenter.k8s.aws/v1beta1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  # AMI: Use EKS-optimized AL2023 — auto-discovered by Karpenter
+  amiFamily: AL2023
+
+  # Subnet discovery: Karpenter finds subnets tagged with this label
+  # (set in our VPC Terraform module)
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: cava-platform-prod
+
+  # Security group: Use the EKS cluster security group
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: cava-platform-prod
+
+  # Instance profile for nodes (created in Terraform EKS module)
+  instanceProfile: cava-platform-prod-node
+
+  # Block device mapping — gp3 is cheaper and faster than gp2
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeType: gp3
+        volumeSize: 100Gi
+        iops: 3000
+        throughput: 125
+        encrypted: true
+        deleteOnTermination: true
+
+  # Metadata options — IMDSv2 required for security
+  metadataOptions:
+    httpEndpoint: enabled
+    httpProtocolIPv6: disabled
+    httpPutResponseHopLimit: 2
+    httpTokens: required  # Enforce IMDSv2
+
+  # Tags applied to provisioned EC2 instances
+  tags:
+    ManagedBy: karpenter
+    Project: cava-k8s-platform
+    Environment: prod
+
+---
+################################################################################
+# NodePool for critical workloads — on-demand only, higher priority
+# Use this for databases, stateful sets, anything that shouldn't be interrupted
+################################################################################
+apiVersion: karpenter.sh/v1beta1
+kind: NodePool
+metadata:
+  name: critical-workloads
+spec:
+  template:
+    metadata:
+      labels:
+        role: critical
+    spec:
+      nodeClassRef:
+        apiVersion: karpenter.k8s.aws/v1beta1
+        kind: EC2NodeClass
+        name: default
+      requirements:
+        - key: "kubernetes.io/arch"
+          operator: In
+          values: ["amd64"]
+        # On-demand only — no spot for critical workloads
+        - key: "karpenter.sh/capacity-type"
+          operator: In
+          values: ["on-demand"]
+        - key: "karpenter.k8s.aws/instance-category"
+          operator: In
+          values: ["m", "r"]
+        - key: "karpenter.k8s.aws/instance-generation"
+          operator: Gt
+          values: ["5"]
+        - key: "karpenter.k8s.aws/instance-size"
+          operator: In
+          values: ["xlarge", "2xlarge", "4xlarge"]
+      # Taint so only pods that tolerate this land here
+      taints:
+        - key: critical-only
+          effect: NoSchedule
+
+  limits:
+    cpu: "32"
+    memory: "128Gi"
+
+  disruption:
+    consolidationPolicy: WhenEmpty
+    consolidateAfter: 300s  # More conservative for critical workloads
+    budgets:
+      - nodes: "10%"
+
+  weight: 100  # Higher priority — Karpenter tries this first for matching pods

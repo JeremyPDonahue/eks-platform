@@ -1,0 +1,358 @@
+################################################################################
+# Grafana Dashboard: Kubernetes Cluster Health
+#
+# Deployed as a ConfigMap, auto-discovered by Grafana's sidecar.
+# Designed for dev/support team training (per JD requirement).
+#
+# Panels:
+# 1. Cluster resource utilization (CPU/Memory %)
+# 2. Pod status overview (Running, Pending, Failed, CrashLoopBackOff)
+# 3. Node health + capacity
+# 4. Top resource consumers
+# 5. Pod restart history (catches CrashLoopBackOff patterns)
+################################################################################
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-cluster-health
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "true"  # Sidecar discovers this label
+data:
+  cluster-health.json: |
+    {
+      "dashboard": {
+        "title": "CAVA Platform - Cluster Health",
+        "description": "Production cluster health overview for platform and support teams",
+        "tags": ["platform", "kubernetes", "health"],
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "title": "Cluster CPU Utilization",
+            "type": "gauge",
+            "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+            "targets": [
+              {
+                "expr": "100 * sum(rate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\"}[5m])) / sum(kube_node_status_allocatable{resource=\"cpu\"})",
+                "legendFormat": "CPU %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    { "value": 0, "color": "green" },
+                    { "value": 70, "color": "yellow" },
+                    { "value": 85, "color": "red" }
+                  ]
+                },
+                "unit": "percent"
+              }
+            }
+          },
+          {
+            "title": "Cluster Memory Utilization",
+            "type": "gauge",
+            "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+            "targets": [
+              {
+                "expr": "100 * sum(container_memory_working_set_bytes{container!=\"\",container!=\"POD\"}) / sum(kube_node_status_allocatable{resource=\"memory\"})",
+                "legendFormat": "Memory %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "max": 100,
+                "thresholds": {
+                  "steps": [
+                    { "value": 0, "color": "green" },
+                    { "value": 75, "color": "yellow" },
+                    { "value": 90, "color": "red" }
+                  ]
+                },
+                "unit": "percent"
+              }
+            }
+          },
+          {
+            "title": "Pod Status Overview",
+            "description": "Quick view of pod health — watch for Pending and CrashLoopBackOff",
+            "type": "stat",
+            "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(kube_pod_status_phase{phase=\"Running\"})",
+                "legendFormat": "Running"
+              },
+              {
+                "expr": "sum(kube_pod_status_phase{phase=\"Pending\"})",
+                "legendFormat": "Pending"
+              },
+              {
+                "expr": "sum(kube_pod_status_phase{phase=\"Failed\"})",
+                "legendFormat": "Failed"
+              },
+              {
+                "expr": "sum(kube_pod_container_status_waiting_reason{reason=\"CrashLoopBackOff\"})",
+                "legendFormat": "CrashLoopBackOff"
+              }
+            ],
+            "fieldConfig": {
+              "overrides": [
+                { "matcher": { "id": "byName", "options": "Running" }, "properties": [{ "id": "color", "value": { "fixedColor": "green" } }] },
+                { "matcher": { "id": "byName", "options": "Pending" }, "properties": [{ "id": "color", "value": { "fixedColor": "yellow" } }] },
+                { "matcher": { "id": "byName", "options": "Failed" }, "properties": [{ "id": "color", "value": { "fixedColor": "red" } }] },
+                { "matcher": { "id": "byName", "options": "CrashLoopBackOff" }, "properties": [{ "id": "color", "value": { "fixedColor": "red" } }] }
+              ]
+            }
+          },
+          {
+            "title": "Node Status",
+            "type": "table",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 6 },
+            "targets": [
+              {
+                "expr": "kube_node_status_condition{condition=\"Ready\",status=\"true\"} * on(node) group_left() (sum by (node) (kube_node_status_allocatable{resource=\"cpu\"}))",
+                "legendFormat": "{{node}}",
+                "format": "table",
+                "instant": true
+              }
+            ]
+          },
+          {
+            "title": "Pod Restarts (Last 1h)",
+            "description": "Identifies pods in CrashLoopBackOff or frequent restart cycles",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+            "targets": [
+              {
+                "expr": "topk(10, sum by (namespace, pod) (increase(kube_pod_container_status_restarts_total[1h])) > 0)",
+                "legendFormat": "{{namespace}}/{{pod}}"
+              }
+            ]
+          },
+          {
+            "title": "Top CPU Consumers",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+            "targets": [
+              {
+                "expr": "topk(10, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!=\"\",container!=\"POD\"}[5m])))",
+                "legendFormat": "{{namespace}}/{{pod}}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+################################################################################
+# Grafana Dashboard: Karpenter Autoscaling
+#
+# Critical for the load testing phase (Feb–March).
+# Shows how Karpenter is scaling, what it's provisioning, and cost impact.
+################################################################################
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-karpenter
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "true"
+data:
+  karpenter.json: |
+    {
+      "dashboard": {
+        "title": "CAVA Platform - Karpenter Autoscaling",
+        "description": "Karpenter provisioning decisions, scaling events, and cost optimization",
+        "tags": ["platform", "karpenter", "autoscaling"],
+        "timezone": "browser",
+        "refresh": "30s",
+        "time": {
+          "from": "now-3h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "title": "Active Nodes by Capacity Type",
+            "description": "Spot vs On-Demand — track cost optimization ratio",
+            "type": "piechart",
+            "gridPos": { "h": 8, "w": 8, "x": 0, "y": 0 },
+            "targets": [
+              {
+                "expr": "count by (karpenter_sh_capacity_type) (karpenter_nodes_allocatable{resource_type=\"cpu\"})",
+                "legendFormat": "{{karpenter_sh_capacity_type}}"
+              }
+            ]
+          },
+          {
+            "title": "Karpenter Nodes Total",
+            "type": "stat",
+            "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+            "targets": [
+              {
+                "expr": "count(karpenter_nodes_allocatable{resource_type=\"cpu\"})",
+                "legendFormat": "Nodes"
+              }
+            ]
+          },
+          {
+            "title": "Pending Pods (Karpenter Queue)",
+            "description": "Pods waiting for Karpenter to provision nodes. Spike = scaling lag.",
+            "type": "stat",
+            "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(kube_pod_status_phase{phase=\"Pending\"})",
+                "legendFormat": "Pending"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "thresholds": {
+                  "steps": [
+                    { "value": 0, "color": "green" },
+                    { "value": 5, "color": "yellow" },
+                    { "value": 20, "color": "red" }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "title": "Provisioned CPU vs Limits",
+            "description": "How close Karpenter is to the 100 CPU limit",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(karpenter_nodes_allocatable{resource_type=\"cpu\"})",
+                "legendFormat": "Provisioned CPU"
+              },
+              {
+                "expr": "100",
+                "legendFormat": "Limit (100 vCPU)"
+              }
+            ]
+          },
+          {
+            "title": "Node Provisioning / Deprovisioning Events",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+            "targets": [
+              {
+                "expr": "sum(increase(karpenter_provisioner_scheduling_duration_seconds_count[5m]))",
+                "legendFormat": "Scheduling Attempts"
+              },
+              {
+                "expr": "sum(increase(karpenter_nodes_created[5m]))",
+                "legendFormat": "Nodes Created"
+              },
+              {
+                "expr": "sum(increase(karpenter_nodes_terminated[5m]))",
+                "legendFormat": "Nodes Terminated"
+              }
+            ]
+          },
+          {
+            "title": "Instance Types in Use",
+            "description": "What Karpenter is selecting — verify it's picking cost-effective types",
+            "type": "table",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+            "targets": [
+              {
+                "expr": "count by (instance_type, karpenter_sh_capacity_type) (karpenter_nodes_allocatable{resource_type=\"cpu\"})",
+                "format": "table",
+                "instant": true
+              }
+            ]
+          },
+          {
+            "title": "Interruption Events (Spot)",
+            "description": "Track spot reclamations — high count may mean bad instance selection",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+            "targets": [
+              {
+                "expr": "sum(increase(karpenter_interruption_received_messages[5m])) by (message_type)",
+                "legendFormat": "{{message_type}}"
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+---
+################################################################################
+# Grafana Dashboard: NGINX Ingress
+# Since they use NGINX, this gives visibility into traffic + errors
+################################################################################
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-nginx
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "true"
+data:
+  nginx-ingress.json: |
+    {
+      "dashboard": {
+        "title": "CAVA Platform - NGINX Ingress",
+        "tags": ["platform", "nginx", "ingress"],
+        "timezone": "browser",
+        "refresh": "30s",
+        "panels": [
+          {
+            "title": "Request Rate by Ingress",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(rate(nginx_ingress_controller_requests[5m])) by (ingress)",
+                "legendFormat": "{{ingress}}"
+              }
+            ]
+          },
+          {
+            "title": "Error Rate (4xx + 5xx)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+            "targets": [
+              {
+                "expr": "sum(rate(nginx_ingress_controller_requests{status=~\"4..\"}[5m])) by (ingress)",
+                "legendFormat": "4xx - {{ingress}}"
+              },
+              {
+                "expr": "sum(rate(nginx_ingress_controller_requests{status=~\"5..\"}[5m])) by (ingress)",
+                "legendFormat": "5xx - {{ingress}}"
+              }
+            ]
+          },
+          {
+            "title": "P99 Latency by Ingress",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+            "targets": [
+              {
+                "expr": "histogram_quantile(0.99, sum(rate(nginx_ingress_controller_request_duration_seconds_bucket[5m])) by (ingress, le))",
+                "legendFormat": "p99 - {{ingress}}"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "s"
+              }
+            }
+          }
+        ]
+      }
+    }
