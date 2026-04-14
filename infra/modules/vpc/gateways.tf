@@ -8,6 +8,10 @@ resource "aws_internet_gateway" "this" {
 }
 
 # NAT GATEWAY CONFIGURATION
+
+# TRADEOFF: Single NAT for pilot (saves ~$90/mo). For production HA,
+# set single_nat_gateway = false to get one per AZ.
+
 resource "aws_eip" "nat" {
   count  = var.single_nat_gateway ? 1 : length(local.azs)
   domain = "vpc"
