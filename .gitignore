@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+crash.log
+crash.*.log
+
+# Kubernetes / Helm
+*.kubeconfig
+kubeconfig
+secrets.yaml
+*-secret.yaml
+
+# Sensitive files
+*.pem
+*.key
+*.p12
+*.pfx
+*.env
+.env*
