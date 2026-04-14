@@ -1,11 +1,9 @@
-# INTERNET GATEWAY CONFIGURATION
-resource "aws_internet_gateway" "gateway" {
+resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
 
-  tags = {
-    Name      = "${var.cluster_name}-igw"
-    ManagedBy = "terraform"
-  }
+  tags = merge(local.common_tags, {
+    Name = "${var.cluster_name}-igw"
+  })
 }
 
 # NAT GATEWAY CONFIGURATION
