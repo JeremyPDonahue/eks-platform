@@ -1,0 +1,23 @@
+################################################################################
+# Wave 4: Karpenter NodePools (CRDs)
+# After Karpenter controller is running, apply the NodePool configs
+################################################################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter-config
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/JeremyPDonahue/eks-platform.git
+    targetRevision: main
+    path: manifests/kubernetes/karpenter
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

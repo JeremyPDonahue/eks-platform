@@ -1,0 +1,52 @@
+################################################################################
+# Platform Namespaces
+#
+# Deployed in Wave 0 — must exist before any other apps deploy into them.
+# All namespaces used by platform components are declared here so Argo CD
+# manages their lifecycle. Avoids relying on CreateNamespace=true in child apps
+# for namespaces that need labels/annotations (e.g. PSA enforcement).
+################################################################################
+
+# Argo CD — GitOps controller itself
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    app.kubernetes.io/managed-by: argocd
+
+---
+# Karpenter — node autoscaler
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: karpenter
+  labels:
+    app.kubernetes.io/managed-by: argocd
+
+---
+# External Secrets Operator — syncs AWS Secrets Manager → K8s Secrets
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  labels:
+    app.kubernetes.io/managed-by: argocd
+
+---
+# NGINX Ingress Controller
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-nginx
+  labels:
+    app.kubernetes.io/managed-by: argocd
+
+---
+# Monitoring — Prometheus, Grafana, Loki, Alertmanager
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+  labels:
+    app.kubernetes.io/managed-by: argocd

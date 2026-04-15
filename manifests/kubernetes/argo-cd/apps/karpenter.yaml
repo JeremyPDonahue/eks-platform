@@ -1,0 +1,44 @@
+################################################################################
+# Wave 1: Karpenter (node autoscaler)
+# Must be running before workload apps — otherwise pods stay Pending
+################################################################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: karpenter
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: default
+  source:
+    repoURL: https://public.ecr.aws
+    chart: karpenter/karpenter
+    targetRevision: 0.35.0
+    helm:
+      releaseName: karpenter
+      values: |
+        settings:
+          clusterName: cava-platform-prod
+          interruptionQueue: cava-platform-prod-karpenter
+        serviceAccount:
+          annotations:
+            eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/karpenter-controller
+        # Tolerate system node taint — Karpenter runs on managed node group
+        tolerations:
+          - key: CriticalAddonsOnly
+            operator: Exists
+        # Anti-affinity: spread Karpenter replicas across nodes
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: karpenter
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,61 @@
+################################################################################
+# Wave 3: Prometheus Stack (kube-prometheus-stack)
+# Includes Prometheus + node-exporter + kube-state-metrics + Alertmanager
+# Grafana is separate — see grafana.yaml
+################################################################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prometheus
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 58.2.2
+    helm:
+      releaseName: prometheus
+      values: |
+        # Disable Grafana from this chart — we deploy it separately for more control
+        grafana:
+          enabled: false
+        prometheus:
+          prometheusSpec:
+            retention: 15d
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 50Gi
+                  storageClassName: gp3
+            # Scrape Karpenter metrics
+            additionalScrapeConfigs:
+              - job_name: karpenter
+                kubernetes_sd_configs:
+                  - role: endpoints
+                    namespaces:
+                      names: ["karpenter"]
+                relabel_configs:
+                  - source_labels: [__meta_kubernetes_endpoint_port_name]
+                    regex: http-metrics
+                    action: keep
+        # Alert rules for platform health
+        defaultRules:
+          create: true
+          rules:
+            etcd: false  # EKS manages etcd
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true  # Required for CRDs in kube-prometheus-stack

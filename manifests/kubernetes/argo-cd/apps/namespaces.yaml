@@ -1,0 +1,23 @@
+################################################################################
+# Wave 0: Namespaces + RBAC
+# Must deploy first — other apps need these namespaces to exist
+################################################################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespaces
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/JeremyPDonahue/eks-platform.git
+    targetRevision: main
+    path: manifests/kubernetes/base/namespaces
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

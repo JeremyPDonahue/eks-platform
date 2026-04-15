@@ -1,0 +1,79 @@
+################################################################################
+# Wave 3: Grafana
+# Separate from prometheus-stack for independent lifecycle management
+################################################################################
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  project: default
+  source:
+    repoURL: https://grafana.github.io/helm-charts
+    chart: grafana
+    targetRevision: 7.3.7
+    helm:
+      releaseName: grafana
+      values: |
+        serviceAccount:
+          annotations:
+            eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/cava-platform-prod-grafana
+        persistence:
+          enabled: true
+          size: 10Gi
+          storageClassName: gp3
+        # Auto-provision datasources
+        datasources:
+          datasources.yaml:
+            apiVersion: 1
+            datasources:
+              - name: Prometheus
+                type: prometheus
+                url: http://prometheus-kube-prometheus-prometheus.monitoring:9090
+                isDefault: true
+                access: proxy
+              - name: Loki
+                type: loki
+                url: http://loki.monitoring:3100
+                access: proxy
+              - name: CloudWatch
+                type: cloudwatch
+                jsonData:
+                  defaultRegion: us-east-1
+                  authType: default
+        # Dashboard providers — load dashboards from configmaps
+        dashboardProviders:
+          dashboardproviders.yaml:
+            apiVersion: 1
+            providers:
+              - name: platform
+                orgId: 1
+                folder: Platform
+                type: file
+                disableDeletion: false
+                editable: true
+                options:
+                  path: /var/lib/grafana/dashboards/platform
+        # Sidecar auto-discovers ConfigMaps with grafana_dashboard label
+        sidecar:
+          dashboards:
+            enabled: true
+            label: grafana_dashboard
+            folder: /var/lib/grafana/dashboards/platform
+        ingress:
+          enabled: true
+          ingressClassName: nginx
+          hosts:
+            - grafana.cava-platform.internal
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
